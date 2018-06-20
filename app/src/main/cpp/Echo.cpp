@@ -695,7 +695,13 @@ void Java_com_liu_echo_EchoClientActivity_nativeStartUdpClient
     }
 }
 
-static int NewLocalSocket(JNIEnv *env, jobject obj){
+/**
+ *  构造一个新的原生 UNIX socket
+ * @param env JNIEnv 接口
+ * @param obj Java 对象实例
+ * @return sd socket 描述
+ */
+static int NewLocalSocket(JNIEnv *env, jobject obj) {
     // 构造 Socket
     LogMessage(env, obj, "Constructing a new local UNIX Socket...");
     int localSocket = socket(PF_LOCAL, SOCK_STREAM, 0);
@@ -705,6 +711,60 @@ static int NewLocalSocket(JNIEnv *env, jobject obj){
         ThrowErrnoException(env, "java/io/IOException", errno);
     }
     return localSocket;
+}
+
+/**
+ * 将本地 UNIX socket 与某一名称绑定
+ * @param env JNIEnv 接口
+ * @param obj Java 对象实例
+ * @param sd socket 描述符
+ * @param name socket 名称
+ */
+static void BindLocalSocketToName(JNIEnv *env, jobject obj, int sd, const char *name) {
+
+    /*
+    sockaddr_un 地址结构体指定本地 socket 的协议地址
+    struct sockaddr_un {
+        sa_family_t  sun_family;
+        char sun_path[UNIX_PATH_MAX];
+    };
+     */
+
+    struct sockaddr_un address;
+
+    // 名字长度
+    const size_t nameLength = strlen(name);
+
+    // 路径长度初始化与名字长度相等
+    size_t pathLength = nameLength;
+
+    // 如果名字不是以'/'开头，即它在抽象命名空间里
+    // in the abstract namespace
+    bool abstractNamespace = ('/' != name[0]);
+
+    // 抽象命名空间要求目录的第一个字节是 0 字节，更新目录长度包括 0 字节
+    if (abstractNamespace) {
+        pathLength++;
+    }
+
+    // 检查路径长度
+    if (pathLength > sizeof(address.sun_path)) {
+        // 抛出带错误号的异常
+        ThrowException(env, "java/io/IOException", "Name is too big");
+    } else {
+        // 清除地址字节
+        memset(&address, 0, sizeof(address));
+        address.sun_family = PF_LOCAL;
+
+        // socket 路径
+        char *sunPath = address.sun_path;
+
+        // 第一个字节必须是 0 以使用抽象命名空间
+        if (abstractNamespace) {
+            *sunPath++ = NULL;
+        }
+
+    }
 }
 
 void Java_com_liu_echo_LocalSocketActivity_nativeStartLocalServer
