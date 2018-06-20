@@ -44,6 +44,12 @@ public class LocalSocketActivity extends AbstractEchoActivity {
                 socketName = name;
             }
 
+            ServerTask serverTask = new ServerTask(socketName);
+            serverTask.start();
+
+            ClientTask clientTask = new ClientTask(socketName, message);
+            clientTask.start();
+
         }
 
     }
@@ -51,8 +57,8 @@ public class LocalSocketActivity extends AbstractEchoActivity {
     /**
      * 检查名称是否是 filesystem socket
      *
-     * @param name
-     * @return
+     * @param name 名称
+     * @return 是否文件开头
      */
     private boolean isFilesystemSocket(String name) {
         return name.startsWith("/");
@@ -61,11 +67,17 @@ public class LocalSocketActivity extends AbstractEchoActivity {
     /**
      * 启动绑定到给定名称的本地 UNIX socket 服务器
      *
-     * @param name
-     * @throws Exception
+     * @param name 名称
+     * @throws Exception 可能的IO流异常
      */
     private native void nativeStartLocalServer(String name) throws Exception;
 
+    /**
+     * 启动本地 UNIX socket 客户端
+     * @param name 名称
+     * @param message 消息
+     * @throws Exception 可能的异常
+     */
     private void startLocalClient(String name, String message) throws Exception {
         // 构造一个本地 socket
         LocalSocket clientSocket = new LocalSocket();
@@ -90,7 +102,7 @@ public class LocalSocketActivity extends AbstractEchoActivity {
             logMessage("Sending to the socket...");
             OutputStream outputStream = clientSocket.getOutputStream();
             outputStream.write(messageBytes);
-            logMessage(String.format("Sent %d bytes: %s", messageBytes.length, message);
+            logMessage(String.format("Sent %d bytes: %s", messageBytes.length, message));
 
             // 从 socket 中接收消息返回
             logMessage("Receiving from the socket...");
@@ -106,6 +118,66 @@ public class LocalSocketActivity extends AbstractEchoActivity {
         } finally {
             // 关闭本地 socket
             clientSocket.close();
+        }
+    }
+
+    /**
+     * 服务器任务
+     */
+    private class ServerTask extends AbstractEchoTask {
+        /**
+         * Socket 名称
+         */
+        private final String name;
+
+        /**
+         * 构造函数
+         *
+         * @param name socket 名称
+         */
+        public ServerTask(String name) {
+            this.name = name;
+        }
+
+        @Override
+        protected void onBackground() {
+            logMessage("Starting server.");
+            try {
+                nativeStartLocalServer(name);
+            } catch (Exception e) {
+                logMessage(e.getMessage());
+            }
+            logMessage("Server terminated.");
+        }
+    }
+
+    private class ClientTask extends Thread {
+        /**
+         * Socket 名称
+         */
+        private final String name;
+
+        /**
+         * 发送的文本消息
+         */
+        private final String message;
+
+        public ClientTask(String name, String message) {
+            this.name = name;
+            this.message = message;
+        }
+
+        @Override
+        public void run() {
+            logMessage("Starting client.");
+
+            try {
+                startLocalClient(name, message);
+            } catch (Exception e) {
+                logMessage(e.getMessage());
+            }
+
+            logMessage("Client terminated.");
         }
     }
 }

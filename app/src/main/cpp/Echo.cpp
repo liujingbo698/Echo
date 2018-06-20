@@ -1,5 +1,6 @@
 #include "com_liu_echo_EchoServerActivity.h"
 #include "com_liu_echo_EchoClientActivity.h"
+#include "com_liu_echo_LocalSocketActivity.h"
 #include <stdio.h> // NULL
 #include <stdarg.h> // va_list, vsnprintf
 #include <errno.h> // errno
@@ -693,3 +694,18 @@ void Java_com_liu_echo_EchoClientActivity_nativeStartUdpClient
         close(clientSocket);
     }
 }
+
+static int NewLocalSocket(JNIEnv *env, jobject obj){
+    // 构造 Socket
+    LogMessage(env, obj, "Constructing a new local UNIX Socket...");
+    int localSocket = socket(PF_LOCAL, SOCK_STREAM, 0);
+    // 检查 socket 构造是否正确
+    if (-1 == localSocket) {
+        // 抛出带错误号的异常
+        ThrowErrnoException(env, "java/io/IOException", errno);
+    }
+    return localSocket;
+}
+
+void Java_com_liu_echo_LocalSocketActivity_nativeStartLocalServer
+        (JNIEnv *, jobject, jstring);
