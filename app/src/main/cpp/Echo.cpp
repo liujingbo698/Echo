@@ -714,7 +714,7 @@ static int NewLocalSocket(JNIEnv *env, jobject obj) {
 }
 
 /**
- * 将本地 UNIX socket 与某一名称绑定
+ * 将本地 UNIX socket 与某一名称绑定，之后就能等待并接收数据了
  * @param env JNIEnv 接口
  * @param obj Java 对象实例
  * @param sd socket 描述符
@@ -761,11 +761,115 @@ static void BindLocalSocketToName(JNIEnv *env, jobject obj, int sd, const char *
 
         // 第一个字节必须是 0 以使用抽象命名空间
         if (abstractNamespace) {
+            // ++优先级大于* 先运算 ++ 再运算 *
+            // 指针指向第二项，并把第一项设置为 NULL
             *sunPath++ = NULL;
         }
+
+        // 追加本地名字
+        strcpy(sunPath, name);
+
+        // 地址长度
+        socklen_t addressLength =
+                (offsetof(struct sockaddr_un, sun_path)) // 获取 sun_path 在结构体 sockaddr_un 中的偏移量
+                + pathLength;
+
+        // 如果 Socket 名已经绑定，取消连接
+        unlink(address.sun_path);
+
+        // 绑定 Socket
+        LogMessage(env, obj, "Binding to local name %s%s.", (abstractNamespace) ? "(null)" : "",
+                   name);
+
+        if (-1 == bind(sd, (struct sockaddr *) &address, addressLength)) {
+            // 抛出带错误号的异常
+            ThrowErrnoException(env, "java/io/IOException", errno);
+        }
+
 
     }
 }
 
+/**
+ * 阻塞并等待即将到来的客户端连接
+ * @param env JNIEnv 接口
+ * @param obj Java 对象实例
+ * @param sd Socket描述符
+ * @return 接受后的客户端 Socket描述符
+ */
+static int AcceptOnLocalSocket(JNIEnv *env, jobject obj, int sd) {
+    // 阻塞并等待即将到来的客户端连接并接收它
+    LogMessage(env, obj, "Waiting for a client connection...");
+    int clientSocket = accept(sd, NULL, NULL);
+
+    // 如果客户端 Socket 无效
+    if (-1 == clientSocket) {
+        // 抛出带错误号的异常
+        ThrowErrnoException(env, "java/io/IOException", errno);
+    }
+    return clientSocket;
+}
+
 void Java_com_liu_echo_LocalSocketActivity_nativeStartLocalServer
-        (JNIEnv *, jobject, jstring);
+        (JNIEnv *env, jobject obj, jstring name) {
+    // 构造一个新的本地 UNIX Socket
+    int serverSocket = NewLocalSocket(env, obj);
+    if (NULL == env->ExceptionOccurred()) {
+        // 以 C 字符串的形式获取名称
+        const char *nameText = env->GetStringUTFChars(name, NULL);
+        if (NULL == nameText) {
+            goto exit;
+        }
+
+        // 绑定 Socket 到某一端口号
+        BindLocalSocketToName(env, obj, serverSocket, nameText);
+
+        // 释放 name 文本
+        env->ReleaseStringUTFChars(name, nameText);
+
+        // 如果绑定失败、
+        if (NULL != env->ExceptionOccurred()) {
+            goto exit;
+        }
+
+        // 监听有 4 个挂起连接的带 backlog 的 socket
+        ListenOnSocket(env, obj, serverSocket, 4);
+        if (NULL != env->ExceptionOccurred()) {
+            goto exit;
+        }
+
+        // 接受 socket 的一个客户连接
+        int clientSocket = AcceptOnLocalSocket(env, obj, serverSocket);
+        if (NULL != env->ExceptionOccurred()) {
+            goto exit;
+        }
+
+        char buffer[MAX_BUFFER_SIZE];
+        ssize_t recvSize;
+        ssize_t sentSize;
+
+        // 接受并发送回数据
+        while (1) {
+            // 从 socket 中接受
+            recvSize = ReceiveFromSocket(env, obj, clientSocket, buffer, MAX_BUFFER_SIZE);
+
+            if ((0 == recvSize) || (NULL != env->ExceptionOccurred())) {
+                break;
+            }
+
+            // 发送给 socket
+            sentSize = SendToSocket(env, obj, clientSocket, buffer, (size_t) recvSize);
+            if ((0 == sentSize) || (NULL != env->ExceptionOccurred())) {
+                break;
+            }
+        }
+
+        // 关闭客户端 socket
+        close(clientSocket);
+    }
+
+    exit:
+    if (serverSocket > 0) {
+        close(serverSocket);
+    }
+}
